@@ -668,6 +668,17 @@ bool Adafruit_PyCamera::captureFrame(void) {
   return true;
 }
 
+bool Adafruit_PyCamera::captureFrameHook(std::function<bool(camera_fb_t*)> hook) {
+  camera_fb_t* frame1 = esp_camera_fb_get();
+  if (!frame1) {
+    ESP_LOGE(TAG, "Camera frame capture failed");
+    return false;
+  }
+  auto res = hook(frame1);
+  esp_camera_fb_return(frame1);
+  return res;
+}
+
 /**************************************************************************/
 /**
  * @brief Blits the current frame buffer to the display.

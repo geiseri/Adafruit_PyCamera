@@ -80,6 +80,7 @@ public:
   void endSD(void);
   void I2Cscan(void);
 
+  bool captureFrameHook(std::function<bool(camera_fb_t*)> hook);
   bool captureFrame(void);
   void blitFrame(void);
   void refresh(void);
