@@ -87,7 +87,7 @@ static const uint16_t Ipsf[64] =
 
 #if JD_TBLCLIP
 
-#define BYTECLIP(v) Clip8[(unsigned int)(v) & 0x3FF]
+#define BYTECLIP(v) Clip8[(unsigned int)(v)&0x3FF]
 
 static const uint8_t Clip8[1024] = {
     /* 0..255 */
