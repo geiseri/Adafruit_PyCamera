@@ -3,7 +3,7 @@
 #include <Adafruit_AW9523.h>
 #include <Adafruit_NeoPixel.h>
 #include <Adafruit_ST7789.h> // Hardware-specific library for ST7789
-#include <SdFat.h>
+#include <SdFat_Adafruit_Fork.h>
 
 #ifndef TAG
 #define TAG "PYCAM"
