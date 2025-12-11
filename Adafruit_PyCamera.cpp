@@ -1,45 +1,32 @@
 #include "Adafruit_PyCamera.h"
+#include "esp_camera.h"
+#include "sensor.h"
+#include <array>
 
-static uint16_t *jpeg_buffer = NULL;
-
-/**************************************************************************/
-/**
- * @brief Outputs the buffer for JPEG decoding.
- *
- * @param x The x-coordinate where the bitmap starts.
- * @param y The y-coordinate where the bitmap starts.
- * @param w The width of the bitmap.
- * @param h The height of the bitmap.
- * @param bitmap Pointer to the bitmap data.
- *
- * @return true if the buffer is successfully outputted, false otherwise.
- *
- * @details This function is used as a callback for JPEG decoding. It outputs
- * the decoded bitmap to a specified location in the `jpeg_buffer`. The function
- * checks for the validity of `jpeg_buffer` and ensures that the drawing
- * operations stay within the bounds of the buffer.
- */
-/**************************************************************************/
-bool buffer_output(int16_t x, int16_t y, uint16_t w, uint16_t h,
-                   uint16_t *bitmap) {
-  if (!jpeg_buffer)
-    return false;
-  // Serial.printf("Drawing [%d, %d] to (%d, %d)\n", w, h, x, y);
-  for (int xi = x; xi < x + w; xi++) {
-    if (xi >= 240)
-      continue;
-    if (xi < 0)
-      continue;
-    for (int yi = y; yi < y + h; yi++) {
-      if (yi >= 240)
-        continue;
-      if (yi < 0)
-        continue;
-      jpeg_buffer[yi * 240 + xi] = bitmap[(yi - y) * w + (xi - x)];
+namespace detail {
+  int JPEGDraw(JPEGDRAW *pDraw)
+  {
+    auto self = reinterpret_cast<PyCameraFB*>(pDraw->pUser);
+    if (self->width() < pDraw->iWidth || self->height() < pDraw->iHeight) {
+      ESP_LOGE("PYCAM", "JPEGDraw: Out of bounds: x=%d, y=%d, width=%d, height=%d", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
+      return 0;
     }
-  }
-  return true;
+    self->drawRGBBitmap((int16_t)pDraw->x, (int16_t)pDraw->y, (uint16_t *)pDraw->pPixels, (int16_t)pDraw->iWidth, (int16_t)pDraw->iHeight);
+    return 1;
+  } /* JPEGDraw() */
+  
+  class scoped_cleanup {
+    public:
+    scoped_cleanup(std::function<void()> func) : func_(func) {}
+    ~scoped_cleanup() { 
+      func_(); 
+      ESP_LOGI("PYCAM", "Scoped cleanup");
+    }
+    private:
+    std::function<void()> func_;
+  };
 }
+
 
 /**************************************************************************/
 /**
@@ -50,7 +37,8 @@ bool buffer_output(int16_t x, int16_t y, uint16_t w, uint16_t h,
  */
 /**************************************************************************/
 Adafruit_PyCamera::Adafruit_PyCamera(void)
-    : Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RESET) {}
+    : Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RESET) {
+    }
 
 /**************************************************************************/
 /**
@@ -64,8 +52,9 @@ Adafruit_PyCamera::Adafruit_PyCamera(void)
  * @return true if initialization is successful, false otherwise.
  */
 /**************************************************************************/
-bool Adafruit_PyCamera::begin() {
-  Serial.println("Init PyCamera obj");
+bool Adafruit_PyCamera::setup(uint32_t freq) {
+  ESP_LOGI("PYCAM", "Init PyCamera object");
+  //begin(freq);
   // Setup and turn off speaker
   pinMode(SPEAKER, OUTPUT);
   digitalWrite(SPEAKER, LOW);
@@ -103,10 +92,7 @@ bool Adafruit_PyCamera::begin() {
   if (!initAccel())
     return false;
 
-  fb = new PyCameraFB(240, 240);
-
   _timestamp = millis();
-
   return true;
 }
 
@@ -125,11 +111,11 @@ bool Adafruit_PyCamera::begin() {
 bool Adafruit_PyCamera::initSD(void) {
 
   if (!SDdetected()) {
-    Serial.println("No SD card inserted");
+    ESP_LOGI("PYCAM", "No SD card inserted");
     return false;
   }
 
-  Serial.println("SD card inserted, trying to init");
+  ESP_LOGI("PYCAM", "SD card inserted, trying to init");
 
   // power reset
   aw.pinMode(AWEXP_SD_PWR, OUTPUT);
@@ -138,18 +124,19 @@ bool Adafruit_PyCamera::initSD(void) {
   pinMode(SD_CS, OUTPUT);
   digitalWrite(SD_CS, LOW);
 
-  Serial.println("De-initing SPI");
+  ESP_LOGI("PYCAM", "De-initing SPI");
   SPI.end();
+  // Configure SPI pins as outputs and set them LOW before reinitializing SPI
   pinMode(SCK, OUTPUT);
   digitalWrite(SCK, LOW);
   pinMode(MOSI, OUTPUT);
-  digitalWrite(MISO, LOW);
+  digitalWrite(MOSI, LOW);  // Fixed: was writing MISO before pinMode
   pinMode(MISO, OUTPUT);
   digitalWrite(MISO, LOW);
 
   delay(50);
 
-  Serial.println("Re-init SPI");
+  ESP_LOGI("PYCAM", "Re-init SPI");
   digitalWrite(SD_CS, HIGH);
   SPI.begin();
   aw.digitalWrite(AWEXP_SD_PWR, LOW); // turn on
@@ -157,26 +144,26 @@ bool Adafruit_PyCamera::initSD(void) {
 
   if (!sd.begin(SD_CS, SD_SCK_MHZ(4))) {
     if (sd.card()->errorCode()) {
-      Serial.printf("SD card init failure with code 0x%x data %d\n",
+      ESP_LOGE("PYCAM", "SD card init failure with code 0x%x data %d",
                     sd.card()->errorCode(), (int)sd.card()->errorData());
     } else if (sd.vol()->fatType() == 0) {
-      Serial.println("Can't find a valid FAT16/FAT32 partition.");
+      ESP_LOGE("PYCAM", "Can't find a valid FAT16/FAT32 partition.");
     } else {
-      Serial.println("SD begin failed, can't determine error type");
+      ESP_LOGE("PYCAM", "SD begin failed, can't determine error type");
     }
     aw.digitalWrite(AWEXP_SD_PWR, HIGH); // turn off power
     return false;
   }
 
-  Serial.println("Card successfully initialized");
+  ESP_LOGI("PYCAM", "Card successfully initialized");
   uint32_t size = sd.card()->sectorCount();
   if (size == 0) {
-    Serial.println("Can't determine the card size");
+    ESP_LOGE("PYCAM", "Can't determine the card size");
   } else {
     uint32_t sizeMB = 0.000512 * size + 0.5;
-    Serial.printf("Card size: %d MB FAT%d\n", (int)sizeMB, sd.vol()->fatType());
+    ESP_LOGI("PYCAM", "Card size: %d MB FAT%d", (int)sizeMB, sd.vol()->fatType());
   }
-  Serial.println("Files found (date time size name):");
+  ESP_LOGI("PYCAM", "Files found (date time size name):");
   sd.ls(LS_R | LS_DATE | LS_SIZE);
   return true;
 }
@@ -204,12 +191,12 @@ void Adafruit_PyCamera::endSD() {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::initExpander(void) {
-  Serial.print("Init AW9523...");
+  ESP_LOGI("PYCAM", "Init AW9523...");
   if (!aw.begin(0x58)) {
-    Serial.println("AW9523 not found!");
+    ESP_LOGE("PYCAM", "AW9523 not found!");
     return false;
   }
-  Serial.println("OK!");
+  ESP_LOGI("PYCAM", "OK!");
   aw.pinMode(AWEXP_SPKR_SD, OUTPUT);
   aw.digitalWrite(AWEXP_SPKR_SD, LOW); // start muted
   aw.pinMode(AWEXP_SD_PWR, OUTPUT);
@@ -231,7 +218,7 @@ bool Adafruit_PyCamera::initExpander(void) {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::initDisplay(void) {
-  Serial.print("Init display....");
+  ESP_LOGI("PYCAM", "Init display....");
 
   pinMode(TFT_BACKLIGHT, OUTPUT);
   digitalWrite(TFT_BACKLIGHT, LOW);
@@ -240,7 +227,7 @@ bool Adafruit_PyCamera::initDisplay(void) {
   fillScreen(ST77XX_GREEN);
 
   digitalWrite(TFT_BACKLIGHT, HIGH);
-  Serial.println("done!");
+  ESP_LOGI("PYCAM", "done!");
   return true;
 }
 
@@ -259,10 +246,53 @@ bool Adafruit_PyCamera::initDisplay(void) {
 bool Adafruit_PyCamera::setFramesize(framesize_t framesize) {
   uint8_t ret = camera->set_framesize(camera, framesize);
   if (ret != 0) {
-    Serial.printf("Could not set resolution: error 0x%x\n", ret);
+    ESP_LOGE("PYCAM", "Could not set resolution: error 0x%x", ret);
     return false;
   }
+  framesize_ = framesize;
+  ESP_LOGI("PYCAM", "Set framesize: %d", framesize);
+  ESP_LOGI("PYCAM", "Camera framesize: %d", camera->status.framesize);
   return true;
+}
+
+framesize_t Adafruit_PyCamera::getFramesize() {
+  return framesize_;
+}
+
+uint8_t Adafruit_PyCamera::getSpecialEffect() {
+  return camera->status.special_effect;
+}
+
+/**************************************************************************/
+/**
+ * @brief Returns a std::array of all valid framesizes for 5MP camera.
+ *
+ * @details This static method returns a std::array containing all available
+ * framesize_t values, in declaration order, as defined in sensor.h.
+ *
+ * @return const reference to std::array<framesize_t, 26>
+ */
+/**************************************************************************/
+const std::array<framesize_t, 17>& Adafruit_PyCamera::validFramesizes() {
+  static const std::array<framesize_t, 17> valid_sizes = {{
+    FRAMESIZE_96X96,
+    FRAMESIZE_QQVGA,
+    FRAMESIZE_128X128,
+    FRAMESIZE_QCIF,
+    FRAMESIZE_HQVGA,
+    FRAMESIZE_240X240,
+    FRAMESIZE_QVGA,
+    FRAMESIZE_320X320,
+    FRAMESIZE_CIF,
+    FRAMESIZE_HVGA,
+    FRAMESIZE_VGA,
+    FRAMESIZE_SVGA,
+    FRAMESIZE_XGA,
+    FRAMESIZE_HD,
+    FRAMESIZE_SXGA,
+    FRAMESIZE_UXGA,
+  }};
+  return valid_sizes;
 }
 
 /**************************************************************************/
@@ -280,7 +310,7 @@ bool Adafruit_PyCamera::setFramesize(framesize_t framesize) {
 bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
   uint8_t ret = camera->set_special_effect(camera, effect);
   if (ret != 0) {
-    Serial.printf("Could not set effect: error 0x%x\n", ret);
+    ESP_LOGE("PYCAM", "Could not set effect: error 0x%x", ret);
     return false;
   }
   return true;
@@ -304,12 +334,11 @@ bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::initCamera(bool hwreset) {
-  Serial.print("Config camera...");
+  ESP_LOGI("PYCAM", "Config camera...");
   Wire.begin();
 
   if (hwreset) {
   }
-
   camera_config.ledc_channel = LEDC_CHANNEL_0;
   camera_config.ledc_timer = LEDC_TIMER_0;
   camera_config.pin_d0 = Y2_GPIO_NUM;
@@ -334,7 +363,7 @@ bool Adafruit_PyCamera::initCamera(bool hwreset) {
   camera_config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   camera_config.fb_location = CAMERA_FB_IN_PSRAM;
 
-  Serial.print("Config format...");
+  ESP_LOGI("PYCAM", "Config format...");
   /*
      // using RGB565 for immediate blitting
      camera_config.pixel_format = PIXFORMAT_RGB565;
@@ -348,18 +377,19 @@ bool Adafruit_PyCamera::initCamera(bool hwreset) {
   camera_config.jpeg_quality = 4;
   camera_config.fb_count = 2;
 
-  Serial.print("Initializing...");
+  ESP_LOGI("PYCAM", "Initializing...");
   // camera init
   esp_err_t err = esp_camera_init(&camera_config);
+
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x\n\r", err);
+    ESP_LOGE("PYCAM", "Camera init failed with error 0x%x", err);
     return false;
   }
 
-  Serial.println("OK");
+  ESP_LOGI("PYCAM", "OK");
 
   camera = esp_camera_sensor_get();
-  Serial.printf("Found camera PID %04X\n\r", camera->id.PID);
+  ESP_LOGI("PYCAM", "Found camera PID %04X", camera->id.PID);
   camera->set_hmirror(camera, 0);
   camera->set_vflip(camera, 1);
 
@@ -407,7 +437,7 @@ bool Adafruit_PyCamera::SDdetected(void) {
 /**************************************************************************/
 uint32_t Adafruit_PyCamera::readButtons(void) {
   last_button_state = button_state;
-  button_state = aw.inputGPIO() & AW_INPUTS_MASK;
+  button_state = aw.inputGPIO() & static_cast<uint32_t>(ButtonMask::INPUTS);
   button_state |= (bool)digitalRead(SHUTTER_BUTTON);
   return button_state;
 }
@@ -485,49 +515,55 @@ void Adafruit_PyCamera::speaker_tone(uint32_t tonefreq, uint32_t tonetime) {
 /**************************************************************************/
 bool Adafruit_PyCamera::takePhoto(const char *filename_base,
                                   framesize_t framesize) {
-  bool ok = false;
+  auto original_framesize = getFramesize();
+  auto cleanup = detail::scoped_cleanup([this, original_framesize]() {
+    setFramesize(original_framesize);
+  });
   File file;
-  // esp_err_t res = ESP_OK;
 
   if (!SDdetected()) {
-    Serial.println("No SD card inserted");
+    ESP_LOGE("PYCAM", "No SD card inserted");
     return false;
   }
 
   if (!sd.card() || (sd.card()->sectorCount() == 0)) {
-    Serial.println("No SD card found");
+    ESP_LOGE("PYCAM", "No SD card found");
     // try to initialize?
     if (!initSD())
+    {
+      setFramesize(original_framesize);
+      ESP_LOGE("PYCAM", "SD card init failed");
       return false;
+    }
   }
 
   // we're probably going to succeed in saving the file so we should
   // change rez now since we need to grab two frames worth to clear out a cache
-  Serial.println("Reconfiguring resolution");
+  ESP_LOGI("PYCAM", "Reconfiguring resolution");
   if (!setFramesize(framesize))
     return false;
 
   // capture and toss first internal buffer
-  frame = esp_camera_fb_get();
+  camera_fb_t *frame = esp_camera_fb_get();
+  auto  frame_cleanup = detail::scoped_cleanup([frame]() {
+      esp_camera_fb_return(frame);
+  });
   if (!frame) {
-    esp_camera_fb_return(frame);
-    setFramesize(FRAMESIZE_240X240);
-    Serial.println("Couldnt capture first frame");
+    ESP_LOGE("PYCAM", "Couldnt capture first frame");
     return false;
   }
-  Serial.printf("\t\t\tSnapped 1st %d bytes (%d x %d) in %d ms\n\r", frame->len,
+
+  ESP_LOGI("PYCAM", "\t\t\tSnapped 1st %d bytes (%d x %d) in %d ms", frame->len,
                 frame->width, frame->height, (int)timestamp());
   esp_camera_fb_return(frame);
 
   // capture and toss second internal buffer
   frame = esp_camera_fb_get();
   if (!frame) {
-    esp_camera_fb_return(frame);
-    Serial.println("Couldnt capture second frame");
-    setFramesize(FRAMESIZE_240X240);
+    ESP_LOGE("PYCAM", "Couldnt capture second frame");
     return false;
   }
-  Serial.printf("\t\t\tSnapped 2nd %d bytes (%d x %d) in %d ms\n\r", frame->len,
+  ESP_LOGI("PYCAM", "\t\t\tSnapped 2nd %d bytes (%d x %d) in %d ms", frame->len,
                 frame->width, frame->height, (int)timestamp());
   char fullfilename[64];
   for (int inc = 0; inc <= 1000; inc++) {
@@ -538,25 +574,25 @@ bool Adafruit_PyCamera::takePhoto(const char *filename_base,
     if (!sd.exists(fullfilename))
       break;
   }
-  // Create the file
+  // Create the file / cleanup the file
+  auto file_cleanup = detail::scoped_cleanup([&file]() {
+    file.close();
+  });
   if (file.open(fullfilename, FILE_WRITE)) {
-    if (file.write(frame->buf, frame->len)) {
-      Serial.printf("Saved JPEG to filename %s\n\r", fullfilename);
-      file.close();
-      // check what we wrote!
-      sd.ls(LS_R | LS_DATE | LS_SIZE);
 
-      ok = true;
+    if (file.write(frame->buf, frame->len)) {
+      ESP_LOGI("PYCAM", "Saved JPEG to filename %s", fullfilename);
+      // flush check what we wrote!
+
+      file.flush();
+      return sd.ls(LS_R | LS_DATE | LS_SIZE);
     } else {
-      Serial.println("Couldn't write JPEG data to file");
+      ESP_LOGE("PYCAM", "Couldn't write JPEG data to file");
     }
   }
 
   // even if it doesnt work out, reset camera size and close file
-  esp_camera_fb_return(frame);
-  file.close();
-  setFramesize(FRAMESIZE_240X240);
-  return ok;
+  return false;
 }
 
 /**************************************************************************/
@@ -590,7 +626,7 @@ uint32_t Adafruit_PyCamera::timestamp(void) {
  */
 /**************************************************************************/
 void Adafruit_PyCamera::timestampPrint(const char *msg) {
-  Serial.printf("%s: %d ms elapsed\n\r", msg, (int)timestamp());
+  ESP_LOGI("PYCAM", "%s: %d ms elapsed", msg, (int)timestamp());
 }
 
 /**************************************************************************/
@@ -614,68 +650,69 @@ bool Adafruit_PyCamera::captureFrame(void) {
   int64_t fr_start = esp_timer_get_time();
 #endif
 
-  frame = esp_camera_fb_get();
-
+  camera_fb_t *frame = esp_camera_fb_get();
+  auto  frame_cleanup = detail::scoped_cleanup([frame]() {
+    esp_camera_fb_return(frame);
+    ESP_LOGE("PYCAM", "Frame cleanup");
+});
   if (!frame) {
-    ESP_LOGE(TAG, "Camera frame capture failed");
+    ESP_LOGE("PYCAM", "Camera frame capture failed");
     return false;
   }
+  ESP_LOGI("PYCAM", "Frame captured: %d x %d", frame->width, frame->height);
 
-  /*
-  Serial.printf("\t\t\tFramed %d bytes (%d x %d) in %d ms\n\r",
-                frame->len,
-                frame->width, frame->height,
-                timestamp());
-  */
   if (camera_config.pixel_format == PIXFORMAT_JPEG) {
-    // Serial.print("JPEG");
-    //  create the framebuffer if we haven't yet
-    if (!fb->getBuffer() || !jpeg_buffer) {
-      jpeg_buffer = (uint16_t *)malloc(240 * 240 * 2);
-      fb->setFB(jpeg_buffer);
-    }
-    uint16_t w = 0, h = 0, scale = 1;
+
+    jpeg_.openRAM(frame->buf, frame->len, detail::JPEGDraw);
+
+    int scale = 0;
     int xoff = 0, yoff = 0;
-    TJpgDec.getJpgSize(&w, &h, frame->buf, frame->len);
-    if (w <= 240 || h <= 240) {
-      scale = 1;
-      xoff = yoff = 0;
-    } else if (w <= 480 || h <= 480) {
-      scale = 2;
-      xoff = (480 - w) / 2;
-      yoff = (480 - h) / 2;
-    } else if (w <= 960 || h <= 960) {
-      scale = 4;
+    
+    if (frame->width <= 240 || frame->height <= 240) {
+      xoff = (frame->width - fb.width()) >> 1;
+      yoff = (frame->height - fb.height()) >> 1;
+    } else if (frame->width <= 480 || frame->height <= 480) {
+      scale = JPEG_SCALE_HALF;
+      xoff = ((frame->width >> 1) - fb.width()) >> 1;
+      yoff = ((frame->height >> 1) - fb.height()) >> 1;
+    } else if (frame->width <= 960 || frame->height <= 960) {
+        scale = JPEG_SCALE_QUARTER;
+        xoff = ((frame->width >> 2) - fb.width()) >> 1;
+        yoff = ((frame->height >> 2) - fb.height()) >> 1;
     } else {
-      scale = 8;
+      scale = JPEG_SCALE_EIGHTH;
+      xoff = ((frame->width >> 3) - fb.width()) >> 1;
+      yoff = ((frame->height >> 3) - fb.height()) >> 1;
     }
-    // Serial.printf(" size: %d x %d, scale %d\n\r", w, h, scale);
-    TJpgDec.setJpgScale(scale);
-    TJpgDec.setCallback(buffer_output);
-    TJpgDec.drawJpg(xoff, yoff, frame->buf, frame->len);
-    fb->setFB(jpeg_buffer);
+    // Clamp offsets to non-negative values to prevent out-of-bounds errors
+    if (xoff < 0) xoff = 0;
+    if (yoff < 0) yoff = 0;
+    //ESP_LOGI("PYCAM", "Decoding JPEG: %d x %d, scale: %d, xoff: %d, yoff: %d", frame->width, frame->height, scale, xoff, yoff);
+    jpeg_.setUserPointer(&fb);
+    jpeg_.setCropArea(0, 0, fb.width(), fb.height());
+    jpeg_.decode(xoff, yoff, scale);
+    jpeg_.close();
   } else if (camera_config.pixel_format == PIXFORMAT_RGB565) {
     // flip endians
-    uint8_t temp;
     for (uint32_t i = 0; i < frame->len; i += 2) {
-      temp = frame->buf[i + 0];
-      frame->buf[i + 0] = frame->buf[i + 1];
-      frame->buf[i + 1] = temp;
+      fb.getBuffer()[i + 0] = frame->buf[i + 1];
+      fb.getBuffer()[i + 1] = frame->buf[i + 0];
     }
-    fb->setFB((uint16_t *)frame->buf);
   }
 
   return true;
 }
 
-bool Adafruit_PyCamera::captureFrameHook(std::function<bool(camera_fb_t*)> hook) {
-  camera_fb_t* frame1 = esp_camera_fb_get();
-  if (!frame1) {
+bool Adafruit_PyCamera::captureFrame(std::function<bool(camera_fb_t*)> hook) {
+  camera_fb_t* frame = esp_camera_fb_get();
+  auto  frame_cleanup = detail::scoped_cleanup([frame]() {
+      esp_camera_fb_return(frame);
+  });
+  if (!frame) {
     ESP_LOGE(TAG, "Camera frame capture failed");
     return false;
   }
-  auto res = hook(frame1);
-  esp_camera_fb_return(frame1);
+  auto res = hook(frame);
   return res;
 }
 
@@ -690,21 +727,9 @@ bool Adafruit_PyCamera::captureFrameHook(std::function<bool(camera_fb_t*)> hook)
  */
 /**************************************************************************/
 void Adafruit_PyCamera::blitFrame(void) {
-  drawRGBBitmap(0, 0, (uint16_t *)fb->getBuffer(), 240, 240);
+  drawRGBBitmap(0, 0, (uint16_t *)fb.getBuffer(), 240, 240);
 
-  esp_camera_fb_return(frame);
 }
-
-/**************************************************************************/
-/**
- * @brief Blits the current frame buffer to the display.
- *
- * @details This function returns the frame buffer to the camera for
- * reuse. Used when you are drawing your own bitmap to the framebuffer
- * in user code.
- */
-/**************************************************************************/
-void Adafruit_PyCamera::refresh(void) { esp_camera_fb_return(frame); }
 
 /**************************************************************************/
 /**
@@ -725,25 +750,25 @@ bool Adafruit_PyCamera::initAccel(void) {
     return false;
   }
   Adafruit_BusIO_Register _chip_id =
-      Adafruit_BusIO_Register(lis_dev, LIS3DH_REG_WHOAMI, 1);
+      Adafruit_BusIO_Register(lis_dev, Adafruit_PyCamera::LIS3DH_REG_WHOAMI, 1);
   if (_chip_id.read() != 0x33) {
     return false;
   }
   Adafruit_BusIO_Register _ctrl1 =
-      Adafruit_BusIO_Register(lis_dev, LIS3DH_REG_CTRL1, 1);
+      Adafruit_BusIO_Register(lis_dev, Adafruit_PyCamera::LIS3DH_REG_CTRL1, 1);
   _ctrl1.write(0x07); // enable all axes, normal mode
   Adafruit_BusIO_RegisterBits data_rate_bits =
       Adafruit_BusIO_RegisterBits(&_ctrl1, 4, 4);
   data_rate_bits.write(0b0111); // set to 400Hz update
 
   Adafruit_BusIO_Register _ctrl4 =
-      Adafruit_BusIO_Register(lis_dev, LIS3DH_REG_CTRL4, 1);
+      Adafruit_BusIO_Register(lis_dev, Adafruit_PyCamera::LIS3DH_REG_CTRL4, 1);
   _ctrl4.write(0x88); // High res & BDU enabled
   Adafruit_BusIO_RegisterBits range_bits =
       Adafruit_BusIO_RegisterBits(&_ctrl4, 2, 4);
   range_bits.write(0b11);
 
-  Serial.println("Found LIS3DH");
+  ESP_LOGI("PYCAM", "Found LIS3DH");
   return true;
 }
 
@@ -763,7 +788,7 @@ bool Adafruit_PyCamera::initAccel(void) {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::readAccelData(int16_t *x, int16_t *y, int16_t *z) {
-  uint8_t register_address = LIS3DH_REG_OUT_X_L;
+  uint8_t register_address = Adafruit_PyCamera::LIS3DH_REG_OUT_X_L;
   register_address |= 0x80; // set [7] for auto-increment
 
   Adafruit_BusIO_Register xl_data =
@@ -805,9 +830,9 @@ bool Adafruit_PyCamera::readAccelData(float *x_g, float *y_g, float *z_g) {
     return false;
 
   uint8_t lsb_value = 48; // for 16G
-  *x_g = lsb_value * ((float)x / LIS3DH_LSB16_TO_KILO_LSB10);
-  *y_g = lsb_value * ((float)y / LIS3DH_LSB16_TO_KILO_LSB10);
-  *z_g = lsb_value * ((float)z / LIS3DH_LSB16_TO_KILO_LSB10);
+  *x_g = lsb_value * ((float)x / Adafruit_PyCamera::LIS3DH_LSB16_TO_KILO_LSB10);
+  *y_g = lsb_value * ((float)y / Adafruit_PyCamera::LIS3DH_LSB16_TO_KILO_LSB10);
+  *z_g = lsb_value * ((float)z / Adafruit_PyCamera::LIS3DH_LSB16_TO_KILO_LSB10);
   return true;
 }
 
@@ -823,17 +848,15 @@ bool Adafruit_PyCamera::readAccelData(float *x_g, float *y_g, float *z_g) {
 /**************************************************************************/
 void Adafruit_PyCamera::I2Cscan(void) {
   Wire.begin();
-  Serial.print("I2C Scan: ");
+  ESP_LOGI("PYCAM", "I2C Scan");
   for (int addr = 0; addr <= 0x7F; addr++) {
     Wire.beginTransmission(addr);
     bool found = (Wire.endTransmission() == 0);
     if (found) {
-      Serial.print("0x");
-      Serial.print(addr, HEX);
-      Serial.print(", ");
+      ESP_LOGI("PYCAM", "Found device at address 0x%02X", addr);
     }
   }
-  Serial.println();
+  ESP_LOGI("PYCAM", "Done");
 }
 
 /**************************************************************************/
