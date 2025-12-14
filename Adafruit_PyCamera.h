@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <cstddef>
 #include <array>
+#include <utility>
 #include <esp_camera.h>
 #include <Adafruit_AW9523.h>
 #include <Adafruit_NeoPixel.h>
@@ -13,6 +14,14 @@
 #ifndef TAG
 #define TAG "PYCAM"
 #endif
+
+namespace detail {
+  // Helper template to deduce array size from initializer list
+  template<typename T, typename... U>
+  constexpr auto make_static_array(U&&... u) -> std::array<T, sizeof...(U)> {
+      return {{std::forward<U>(u)...}};
+  }
+}
 
 /**************************************************************************/
 /**
@@ -91,33 +100,24 @@ public:
     const char* name;
   };
 
-  static constexpr std::array<FramesizeInfo, 25> Framesize = {{
-    {FRAMESIZE_96X96, 96, 96, "96x96"},
-    {FRAMESIZE_QQVGA, 160, 120, "QQVGA"},
-    {FRAMESIZE_128X128, 128, 128, "128x128"},
-    {FRAMESIZE_QCIF, 176, 144, "QCIF"},
-    {FRAMESIZE_HQVGA, 240, 176, "HQVGA"},
-    {FRAMESIZE_240X240, 240, 240, "240x240"},
-    {FRAMESIZE_QVGA, 320, 240, "QVGA"},
-    {FRAMESIZE_320X320, 320, 320, "320x320"},
-    {FRAMESIZE_CIF, 400, 296, "CIF"},
-    {FRAMESIZE_HVGA, 480, 320, "HVGA"},
-    {FRAMESIZE_VGA, 640, 480, "VGA"},
-    {FRAMESIZE_SVGA, 800, 600, "SVGA"},
-    {FRAMESIZE_XGA, 1024, 768, "XGA"},
-    {FRAMESIZE_HD, 1280, 720, "HD"},
-    {FRAMESIZE_SXGA, 1280, 1024, "SXGA"},
-    {FRAMESIZE_UXGA, 1600, 1200, "UXGA"},
-    {FRAMESIZE_FHD, 1920, 1080, "FHD"},
-    {FRAMESIZE_P_HD, 720, 1280, "P_HD"},
-    {FRAMESIZE_P_3MP, 864, 1536, "P_3MP"},
-    {FRAMESIZE_QXGA, 2048, 1536, "QXGA"},
-    {FRAMESIZE_QHD, 2560, 1440, "QHD"},
-    {FRAMESIZE_WQXGA, 2560, 1600, "WQXGA"},
-    {FRAMESIZE_P_FHD, 1080, 1920, "P_FHD"},
-    {FRAMESIZE_QSXGA, 2560, 1920, "QSXGA"},
-    {FRAMESIZE_5MP, 2592, 1944, "5MP"},
-  }};
+  static constexpr auto Framesize = detail::make_static_array<FramesizeInfo>(
+    FramesizeInfo{FRAMESIZE_96X96, 96, 96, "96x96"},
+    FramesizeInfo{FRAMESIZE_QQVGA, 160, 120, "QQVGA"},
+    FramesizeInfo{FRAMESIZE_128X128, 128, 128, "128x128"},
+    FramesizeInfo{FRAMESIZE_QCIF, 176, 144, "QCIF"},
+    FramesizeInfo{FRAMESIZE_HQVGA, 240, 176, "HQVGA"},
+    FramesizeInfo{FRAMESIZE_240X240, 240, 240, "240x240"},
+    FramesizeInfo{FRAMESIZE_QVGA, 320, 240, "QVGA"},
+    FramesizeInfo{FRAMESIZE_320X320, 320, 320, "320x320"},
+    FramesizeInfo{FRAMESIZE_CIF, 400, 296, "CIF"},
+    FramesizeInfo{FRAMESIZE_HVGA, 480, 320, "HVGA"},
+    FramesizeInfo{FRAMESIZE_VGA, 640, 480, "VGA"},
+    FramesizeInfo{FRAMESIZE_SVGA, 800, 600, "SVGA"},
+    FramesizeInfo{FRAMESIZE_XGA, 1024, 768, "XGA"},
+    FramesizeInfo{FRAMESIZE_HD, 1280, 720, "HD"},
+    FramesizeInfo{FRAMESIZE_SXGA, 1280, 1024, "SXGA"},
+    FramesizeInfo{FRAMESIZE_UXGA, 1600, 1200, "UXGA"}
+  );
 
   /**
    * @brief Structure containing special effect information.
@@ -127,15 +127,15 @@ public:
     const char* name;
   };
 
-  static constexpr std::array<SpecialEffectInfo, 7> SpecialEffect = {{
-    {0, "Normal"},
-    {1, "Negative"},
-    {2, "Grayscale"},
-    {3, "Red Tint"},
-    {4, "Green Tint"},
-    {5, "Blue Tint"},
-    {6, "Sepia"},
-  }};
+  static constexpr auto SpecialEffect = detail::make_static_array<SpecialEffectInfo>(
+    SpecialEffectInfo{0, "Normal"},
+    SpecialEffectInfo{1, "Negative"},
+    SpecialEffectInfo{2, "Grayscale"},
+    SpecialEffectInfo{3, "Red Tint"},
+    SpecialEffectInfo{4, "Green Tint"},
+    SpecialEffectInfo{5, "Blue Tint"},
+    SpecialEffectInfo{6, "Sepia"}
+  );
   /**************************************************************************/
   /**
    * @brief Construct a new Adafruit_PyCamera object.

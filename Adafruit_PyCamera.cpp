@@ -286,7 +286,6 @@ framesize_t Adafruit_PyCamera::getFramesize() {
 bool Adafruit_PyCamera::cycleFramesizeForward() {
   framesize_t current = getFramesize();
   
-  // Find current framesize in the Framesize array
   auto it = std::find_if(Framesize.begin(), Framesize.end(),
                          [current](const FramesizeInfo& info) {
                            return info.framesize == current;
@@ -294,17 +293,10 @@ bool Adafruit_PyCamera::cycleFramesizeForward() {
   
   framesize_t next_framesize;
   if (it == Framesize.end()) {
-    // Current framesize not in array, wrap to first
     next_framesize = Framesize.front().framesize;
   } else {
-    // Move to next, clamp at max
     ++it;
-    if (it == Framesize.end()) {
-      // Already at max, clamp to last
-      next_framesize = Framesize.back().framesize;
-    } else {
-      next_framesize = it->framesize;
-    }
+    next_framesize = (it == Framesize.end()) ? Framesize.back().framesize : it->framesize;
   }
   
   return setFramesize(next_framesize);
@@ -325,7 +317,6 @@ bool Adafruit_PyCamera::cycleFramesizeForward() {
 bool Adafruit_PyCamera::cycleFramesizeBackward() {
   framesize_t current = getFramesize();
   
-  // Find current framesize in the Framesize array
   auto it = std::find_if(Framesize.begin(), Framesize.end(),
                          [current](const FramesizeInfo& info) {
                            return info.framesize == current;
@@ -333,13 +324,10 @@ bool Adafruit_PyCamera::cycleFramesizeBackward() {
   
   framesize_t prev_framesize;
   if (it == Framesize.end()) {
-    // Current framesize not in array, wrap to last
     prev_framesize = Framesize.back().framesize;
   } else if (it == Framesize.begin()) {
-    // Already at min, clamp to first
     prev_framesize = Framesize.front().framesize;
   } else {
-    // Move to previous
     --it;
     prev_framesize = it->framesize;
   }
@@ -397,7 +385,6 @@ bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
 bool Adafruit_PyCamera::cycleSpecialEffectForward() {
   uint8_t current = getSpecialEffect();
   
-  // Find current effect in the SpecialEffect array
   auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
                          [current](const SpecialEffectInfo& info) {
                            return info.effect == current;
@@ -405,17 +392,10 @@ bool Adafruit_PyCamera::cycleSpecialEffectForward() {
   
   uint8_t next_effect;
   if (it == SpecialEffect.end()) {
-    // Current effect not in array, wrap to first
     next_effect = SpecialEffect.front().effect;
   } else {
-    // Move to next, clamp at max
     ++it;
-    if (it == SpecialEffect.end()) {
-      // Already at max, clamp to last
-      next_effect = SpecialEffect.back().effect;
-    } else {
-      next_effect = it->effect;
-    }
+    next_effect = (it == SpecialEffect.end()) ? SpecialEffect.back().effect : it->effect;
   }
   
   return setSpecialEffect(next_effect);
@@ -436,7 +416,6 @@ bool Adafruit_PyCamera::cycleSpecialEffectForward() {
 bool Adafruit_PyCamera::cycleSpecialEffectBackward() {
   uint8_t current = getSpecialEffect();
   
-  // Find current effect in the SpecialEffect array
   auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
                          [current](const SpecialEffectInfo& info) {
                            return info.effect == current;
@@ -444,13 +423,10 @@ bool Adafruit_PyCamera::cycleSpecialEffectBackward() {
   
   uint8_t prev_effect;
   if (it == SpecialEffect.end()) {
-    // Current effect not in array, wrap to last
     prev_effect = SpecialEffect.back().effect;
   } else if (it == SpecialEffect.begin()) {
-    // Already at min, clamp to first
     prev_effect = SpecialEffect.front().effect;
   } else {
-    // Move to previous
     --it;
     prev_effect = it->effect;
   }
@@ -514,7 +490,7 @@ bool Adafruit_PyCamera::initCamera(bool hwreset) {
    */
   camera_config.pixel_format = PIXFORMAT_JPEG;
   camera_config.frame_size =
-      FRAMESIZE_UXGA; // start with biggest possible image supported!!! do not
+      Adafruit_PyCamera::Framesize.back().framesize; // start with biggest possible image supported!!! do not
                       // change this
   camera_config.jpeg_quality = 4;
   camera_config.fb_count = 2;
