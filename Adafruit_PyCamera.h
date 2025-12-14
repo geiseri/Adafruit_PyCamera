@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <cstddef>
+#include <array>
 #include <esp_camera.h>
 #include <Adafruit_AW9523.h>
 #include <Adafruit_NeoPixel.h>
@@ -79,6 +81,61 @@ public:
              (1UL << AWEXP_SD_DET)
   };
 
+  /**
+   * @brief Structure containing framesize information.
+   */
+  struct FramesizeInfo {
+    framesize_t framesize;
+    uint16_t width;
+    uint16_t height;
+    const char* name;
+  };
+
+  static constexpr std::array<FramesizeInfo, 25> Framesize = {{
+    {FRAMESIZE_96X96, 96, 96, "96x96"},
+    {FRAMESIZE_QQVGA, 160, 120, "QQVGA"},
+    {FRAMESIZE_128X128, 128, 128, "128x128"},
+    {FRAMESIZE_QCIF, 176, 144, "QCIF"},
+    {FRAMESIZE_HQVGA, 240, 176, "HQVGA"},
+    {FRAMESIZE_240X240, 240, 240, "240x240"},
+    {FRAMESIZE_QVGA, 320, 240, "QVGA"},
+    {FRAMESIZE_320X320, 320, 320, "320x320"},
+    {FRAMESIZE_CIF, 400, 296, "CIF"},
+    {FRAMESIZE_HVGA, 480, 320, "HVGA"},
+    {FRAMESIZE_VGA, 640, 480, "VGA"},
+    {FRAMESIZE_SVGA, 800, 600, "SVGA"},
+    {FRAMESIZE_XGA, 1024, 768, "XGA"},
+    {FRAMESIZE_HD, 1280, 720, "HD"},
+    {FRAMESIZE_SXGA, 1280, 1024, "SXGA"},
+    {FRAMESIZE_UXGA, 1600, 1200, "UXGA"},
+    {FRAMESIZE_FHD, 1920, 1080, "FHD"},
+    {FRAMESIZE_P_HD, 720, 1280, "P_HD"},
+    {FRAMESIZE_P_3MP, 864, 1536, "P_3MP"},
+    {FRAMESIZE_QXGA, 2048, 1536, "QXGA"},
+    {FRAMESIZE_QHD, 2560, 1440, "QHD"},
+    {FRAMESIZE_WQXGA, 2560, 1600, "WQXGA"},
+    {FRAMESIZE_P_FHD, 1080, 1920, "P_FHD"},
+    {FRAMESIZE_QSXGA, 2560, 1920, "QSXGA"},
+    {FRAMESIZE_5MP, 2592, 1944, "5MP"},
+  }};
+
+  /**
+   * @brief Structure containing special effect information.
+   */
+  struct SpecialEffectInfo {
+    uint8_t effect;
+    const char* name;
+  };
+
+  static constexpr std::array<SpecialEffectInfo, 7> SpecialEffect = {{
+    {0, "Normal"},
+    {1, "Negative"},
+    {2, "Grayscale"},
+    {3, "Red Tint"},
+    {4, "Green Tint"},
+    {5, "Blue Tint"},
+    {6, "Sepia"},
+  }};
   /**************************************************************************/
   /**
    * @brief Construct a new Adafruit_PyCamera object.
@@ -97,23 +154,18 @@ public:
   void I2Cscan(void);
 
   bool captureFrame(std::function<bool(camera_fb_t*)> hook);
-  bool captureFrame(void);
+  bool captureFrame(int x = 0, int y = 0, int width = 240, int height = 240);
   void blitFrame(void);
   bool takePhoto(const char *filename_base, framesize_t framesize);
-  /**
-   * @brief Returns a std::array of all valid framesizes for 5MP camera.
-   *
-   * @details This static method returns a std::array containing all available
-   * framesize_t values, in declaration order, as defined in sensor.h.
-   *
-   * @return const reference to std::array<framesize_t, 17>
-   */
-  static const std::array<framesize_t, 17>& validFramesizes();
   bool setFramesize(framesize_t framesize);
   framesize_t getFramesize();
+  bool cycleFramesizeForward();
+  bool cycleFramesizeBackward();
   framesize_t framesize_ = FRAMESIZE_UXGA;
   bool setSpecialEffect(uint8_t effect);
   uint8_t getSpecialEffect();
+  bool cycleSpecialEffectForward();
+  bool cycleSpecialEffectBackward();
   void speaker_tone(uint32_t tonefreq, uint32_t tonetime);
 
   float readBatteryVoltage(void);
@@ -133,12 +185,8 @@ public:
   void timestampPrint(const char *msg);
   /** @brief Pointer to the camera sensor structure. */
   sensor_t *camera;
-  /** @brief Pointer to the camera frame buffer. */
-  //camera_fb_t *frame = NULL;
   /** @brief The PyCamera framebuffer object. */
-  PyCameraFB fb{240, 240};
-  /** @brief JPEGDEC object for decoding JPEG images. */
-  JPEGDEC jpeg_{};
+  PyCameraFB *fb = nullptr;
   /** @brief Adafruit NeoPixel object for single pixel control. */
   Adafruit_NeoPixel pixel;
   /** @brief Adafruit NeoPixel object for ring control. */
@@ -150,8 +198,6 @@ public:
 
   /** @brief SdFat object for SD card operations. */
   SdFat sd;
-  /** @brief Timestamp for internal timing operations. */
-  uint32_t _timestamp;
   /** @brief Last state of the buttons. */
   uint32_t last_button_state = 0xFFFFFFFF;
   /** @brief Current state of the buttons. */
@@ -184,5 +230,11 @@ public:
   static constexpr uint8_t LIS3DH_REG_STATUS2 = 0x27;
   static constexpr uint8_t LIS3DH_REG_OUT_X_L = 0x28; /**< X-axis acceleration data. Low value */
   static constexpr uint16_t LIS3DH_LSB16_TO_KILO_LSB10 = 6400;
+
+private:
+  /** @brief JPEGDEC object for decoding JPEG images. */
+  JPEGDEC *jpeg_ = nullptr;
+  /** @brief Timestamp for internal timing operations. */
+  uint32_t _timestamp;
 
 };

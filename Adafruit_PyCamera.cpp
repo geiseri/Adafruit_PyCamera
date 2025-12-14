@@ -2,6 +2,7 @@
 #include "esp_camera.h"
 #include "sensor.h"
 #include <array>
+#include <algorithm>
 
 namespace detail {
   int JPEGDraw(JPEGDRAW *pDraw)
@@ -20,7 +21,6 @@ namespace detail {
     scoped_cleanup(std::function<void()> func) : func_(func) {}
     ~scoped_cleanup() { 
       func_(); 
-      ESP_LOGI("PYCAM", "Scoped cleanup");
     }
     private:
     std::function<void()> func_;
@@ -38,6 +38,8 @@ namespace detail {
 /**************************************************************************/
 Adafruit_PyCamera::Adafruit_PyCamera(void)
     : Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RESET) {
+    fb = new PyCameraFB(240, 240);
+    jpeg_ = new JPEGDEC();
     }
 
 /**************************************************************************/
@@ -244,6 +246,16 @@ bool Adafruit_PyCamera::initDisplay(void) {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::setFramesize(framesize_t framesize) {
+  // Validate that the framesize is in the Framesize array
+  auto it = std::find_if(Framesize.begin(), Framesize.end(),
+                         [framesize](const FramesizeInfo& info) {
+                           return info.framesize == framesize;
+                         });
+  if (it == Framesize.end()) {
+    ESP_LOGE("PYCAM", "Invalid framesize: %d (not in valid framesizes list)", framesize);
+    return false;
+  }
+  
   uint8_t ret = camera->set_framesize(camera, framesize);
   if (ret != 0) {
     ESP_LOGE("PYCAM", "Could not set resolution: error 0x%x", ret);
@@ -259,40 +271,84 @@ framesize_t Adafruit_PyCamera::getFramesize() {
   return framesize_;
 }
 
-uint8_t Adafruit_PyCamera::getSpecialEffect() {
-  return camera->status.special_effect;
+/**************************************************************************/
+/**
+ * @brief Cycles to the next framesize in the valid framesizes list.
+ *
+ * @details Gets the current framesize, finds it in the valid framesizes list,
+ * and moves to the next one. If already at the maximum, it clamps and stays
+ * at the maximum. If the current framesize is not found in the valid list,
+ * it wraps to the first valid framesize.
+ *
+ * @return true if the framesize was successfully changed, false otherwise.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::cycleFramesizeForward() {
+  framesize_t current = getFramesize();
+  
+  // Find current framesize in the Framesize array
+  auto it = std::find_if(Framesize.begin(), Framesize.end(),
+                         [current](const FramesizeInfo& info) {
+                           return info.framesize == current;
+                         });
+  
+  framesize_t next_framesize;
+  if (it == Framesize.end()) {
+    // Current framesize not in array, wrap to first
+    next_framesize = Framesize.front().framesize;
+  } else {
+    // Move to next, clamp at max
+    ++it;
+    if (it == Framesize.end()) {
+      // Already at max, clamp to last
+      next_framesize = Framesize.back().framesize;
+    } else {
+      next_framesize = it->framesize;
+    }
+  }
+  
+  return setFramesize(next_framesize);
 }
 
 /**************************************************************************/
 /**
- * @brief Returns a std::array of all valid framesizes for 5MP camera.
+ * @brief Cycles to the previous framesize in the valid framesizes list.
  *
- * @details This static method returns a std::array containing all available
- * framesize_t values, in declaration order, as defined in sensor.h.
+ * @details Gets the current framesize, finds it in the valid framesizes list,
+ * and moves to the previous one. If already at the minimum, it clamps and stays
+ * at the minimum. If the current framesize is not found in the valid list,
+ * it wraps to the last valid framesize.
  *
- * @return const reference to std::array<framesize_t, 26>
+ * @return true if the framesize was successfully changed, false otherwise.
  */
 /**************************************************************************/
-const std::array<framesize_t, 17>& Adafruit_PyCamera::validFramesizes() {
-  static const std::array<framesize_t, 17> valid_sizes = {{
-    FRAMESIZE_96X96,
-    FRAMESIZE_QQVGA,
-    FRAMESIZE_128X128,
-    FRAMESIZE_QCIF,
-    FRAMESIZE_HQVGA,
-    FRAMESIZE_240X240,
-    FRAMESIZE_QVGA,
-    FRAMESIZE_320X320,
-    FRAMESIZE_CIF,
-    FRAMESIZE_HVGA,
-    FRAMESIZE_VGA,
-    FRAMESIZE_SVGA,
-    FRAMESIZE_XGA,
-    FRAMESIZE_HD,
-    FRAMESIZE_SXGA,
-    FRAMESIZE_UXGA,
-  }};
-  return valid_sizes;
+bool Adafruit_PyCamera::cycleFramesizeBackward() {
+  framesize_t current = getFramesize();
+  
+  // Find current framesize in the Framesize array
+  auto it = std::find_if(Framesize.begin(), Framesize.end(),
+                         [current](const FramesizeInfo& info) {
+                           return info.framesize == current;
+                         });
+  
+  framesize_t prev_framesize;
+  if (it == Framesize.end()) {
+    // Current framesize not in array, wrap to last
+    prev_framesize = Framesize.back().framesize;
+  } else if (it == Framesize.begin()) {
+    // Already at min, clamp to first
+    prev_framesize = Framesize.front().framesize;
+  } else {
+    // Move to previous
+    --it;
+    prev_framesize = it->framesize;
+  }
+  
+  return setFramesize(prev_framesize);
+}
+
+uint8_t Adafruit_PyCamera::getSpecialEffect() {
+  return camera->status.special_effect;
 }
 
 /**************************************************************************/
@@ -308,12 +364,98 @@ const std::array<framesize_t, 17>& Adafruit_PyCamera::validFramesizes() {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
+  // Validate that the effect is in the SpecialEffect array
+  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+                         [effect](const SpecialEffectInfo& info) {
+                           return info.effect == effect;
+                         });
+  if (it == SpecialEffect.end()) {
+    ESP_LOGE("PYCAM", "Invalid special effect: %d (must be 0-6)", effect);
+    return false;
+  }
+  
   uint8_t ret = camera->set_special_effect(camera, effect);
   if (ret != 0) {
     ESP_LOGE("PYCAM", "Could not set effect: error 0x%x", ret);
     return false;
   }
   return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Cycles to the next special effect in the valid effects list.
+ *
+ * @details Gets the current special effect, finds it in the valid effects list,
+ * and moves to the next one. If already at the maximum, it clamps and stays
+ * at the maximum. If the current effect is not found in the valid list,
+ * it wraps to the first valid effect.
+ *
+ * @return true if the effect was successfully changed, false otherwise.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::cycleSpecialEffectForward() {
+  uint8_t current = getSpecialEffect();
+  
+  // Find current effect in the SpecialEffect array
+  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+                         [current](const SpecialEffectInfo& info) {
+                           return info.effect == current;
+                         });
+  
+  uint8_t next_effect;
+  if (it == SpecialEffect.end()) {
+    // Current effect not in array, wrap to first
+    next_effect = SpecialEffect.front().effect;
+  } else {
+    // Move to next, clamp at max
+    ++it;
+    if (it == SpecialEffect.end()) {
+      // Already at max, clamp to last
+      next_effect = SpecialEffect.back().effect;
+    } else {
+      next_effect = it->effect;
+    }
+  }
+  
+  return setSpecialEffect(next_effect);
+}
+
+/**************************************************************************/
+/**
+ * @brief Cycles to the previous special effect in the valid effects list.
+ *
+ * @details Gets the current special effect, finds it in the valid effects list,
+ * and moves to the previous one. If already at the minimum, it clamps and stays
+ * at the minimum. If the current effect is not found in the valid list,
+ * it wraps to the last valid effect.
+ *
+ * @return true if the effect was successfully changed, false otherwise.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::cycleSpecialEffectBackward() {
+  uint8_t current = getSpecialEffect();
+  
+  // Find current effect in the SpecialEffect array
+  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+                         [current](const SpecialEffectInfo& info) {
+                           return info.effect == current;
+                         });
+  
+  uint8_t prev_effect;
+  if (it == SpecialEffect.end()) {
+    // Current effect not in array, wrap to last
+    prev_effect = SpecialEffect.back().effect;
+  } else if (it == SpecialEffect.begin()) {
+    // Already at min, clamp to first
+    prev_effect = SpecialEffect.front().effect;
+  } else {
+    // Move to previous
+    --it;
+    prev_effect = it->effect;
+  }
+  
+  return setSpecialEffect(prev_effect);
 }
 
 /**************************************************************************/
@@ -643,7 +785,7 @@ void Adafruit_PyCamera::timestampPrint(const char *msg) {
  * processed, false otherwise.
  */
 /**************************************************************************/
-bool Adafruit_PyCamera::captureFrame(void) {
+bool Adafruit_PyCamera::captureFrame(int x, int y, int width, int height) {
   // Serial.println("Capturing...");
   // esp_err_t res = ESP_OK;
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
@@ -653,50 +795,44 @@ bool Adafruit_PyCamera::captureFrame(void) {
   camera_fb_t *frame = esp_camera_fb_get();
   auto  frame_cleanup = detail::scoped_cleanup([frame]() {
     esp_camera_fb_return(frame);
-    ESP_LOGE("PYCAM", "Frame cleanup");
-});
+  });
   if (!frame) {
     ESP_LOGE("PYCAM", "Camera frame capture failed");
     return false;
   }
-  ESP_LOGI("PYCAM", "Frame captured: %d x %d", frame->width, frame->height);
+  //ESP_LOGI("PYCAM", "Frame captured: %d x %d", frame->width, frame->height);
 
   if (camera_config.pixel_format == PIXFORMAT_JPEG) {
 
-    jpeg_.openRAM(frame->buf, frame->len, detail::JPEGDraw);
+    jpeg_->openRAM(frame->buf, frame->len, &detail::JPEGDraw);
 
     int scale = 0;
-    int xoff = 0, yoff = 0;
-    
-    if (frame->width <= 240 || frame->height <= 240) {
-      xoff = (frame->width - fb.width()) >> 1;
-      yoff = (frame->height - fb.height()) >> 1;
-    } else if (frame->width <= 480 || frame->height <= 480) {
-      scale = JPEG_SCALE_HALF;
-      xoff = ((frame->width >> 1) - fb.width()) >> 1;
-      yoff = ((frame->height >> 1) - fb.height()) >> 1;
-    } else if (frame->width <= 960 || frame->height <= 960) {
-        scale = JPEG_SCALE_QUARTER;
-        xoff = ((frame->width >> 2) - fb.width()) >> 1;
-        yoff = ((frame->height >> 2) - fb.height()) >> 1;
+    int xoff = x, yoff = y;
+    fb->fillScreen(ST77XX_BLACK);
+    // Find the largest scale that fits within the target rectangle
+    // Check both width and height to ensure the scaled frame fits
+    if (frame->width <= width && frame->height <= height) {
+      scale = 0;  // No scaling needed
+    } else if ((frame->width / 2) <= width && (frame->height / 2) <= height) {
+      scale = JPEG_SCALE_HALF;  // 1/2 scale
+    } else if ((frame->width / 4) <= width && (frame->height / 4) <= height) {
+      scale = JPEG_SCALE_QUARTER;  // 1/4 scale
     } else {
-      scale = JPEG_SCALE_EIGHTH;
-      xoff = ((frame->width >> 3) - fb.width()) >> 1;
-      yoff = ((frame->height >> 3) - fb.height()) >> 1;
+      scale = JPEG_SCALE_EIGHTH;  // 1/8 scale (guaranteed to fit or be smallest)
     }
     // Clamp offsets to non-negative values to prevent out-of-bounds errors
     if (xoff < 0) xoff = 0;
     if (yoff < 0) yoff = 0;
     //ESP_LOGI("PYCAM", "Decoding JPEG: %d x %d, scale: %d, xoff: %d, yoff: %d", frame->width, frame->height, scale, xoff, yoff);
-    jpeg_.setUserPointer(&fb);
-    jpeg_.setCropArea(0, 0, fb.width(), fb.height());
-    jpeg_.decode(xoff, yoff, scale);
-    jpeg_.close();
+    jpeg_->setUserPointer(fb);
+    jpeg_->setCropArea(0, 0, width, height);
+    jpeg_->decode(xoff, yoff, scale);
+    jpeg_->close();
   } else if (camera_config.pixel_format == PIXFORMAT_RGB565) {
     // flip endians
     for (uint32_t i = 0; i < frame->len; i += 2) {
-      fb.getBuffer()[i + 0] = frame->buf[i + 1];
-      fb.getBuffer()[i + 1] = frame->buf[i + 0];
+      fb->getBuffer()[i + 0] = frame->buf[i + 1];
+      fb->getBuffer()[i + 1] = frame->buf[i + 0];
     }
   }
 
@@ -727,8 +863,7 @@ bool Adafruit_PyCamera::captureFrame(std::function<bool(camera_fb_t*)> hook) {
  */
 /**************************************************************************/
 void Adafruit_PyCamera::blitFrame(void) {
-  drawRGBBitmap(0, 0, (uint16_t *)fb.getBuffer(), 240, 240);
-
+  drawRGBBitmap(0, 0, fb->getBuffer(), 240, 240);
 }
 
 /**************************************************************************/
