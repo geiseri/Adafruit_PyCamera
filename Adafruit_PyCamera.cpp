@@ -335,8 +335,10 @@ bool Adafruit_PyCamera::cycleFramesizeBackward() {
   return setFramesize(prev_framesize);
 }
 
-uint8_t Adafruit_PyCamera::getSpecialEffect() {
-  return camera->status.special_effect;
+SpecialEffect Adafruit_PyCamera::getSpecialEffect() {
+  uint8_t effect = camera->status.special_effect;
+  // Convert uint8_t to SpecialEffect enum
+  return static_cast<SpecialEffect>(effect);
 }
 
 /**************************************************************************/
@@ -351,18 +353,20 @@ uint8_t Adafruit_PyCamera::getSpecialEffect() {
  * error.
  */
 /**************************************************************************/
-bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
-  // Validate that the effect is in the SpecialEffect array
-  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+bool Adafruit_PyCamera::setSpecialEffect(SpecialEffect effect) {
+  // Validate that the effect is in the SpecialEffectList array
+  auto it = std::find_if(SpecialEffectList.begin(), SpecialEffectList.end(),
                          [effect](const SpecialEffectInfo& info) {
                            return info.effect == effect;
                          });
-  if (it == SpecialEffect.end()) {
-    ESP_LOGE("PYCAM", "Invalid special effect: %d (must be 0-6)", effect);
+  if (it == SpecialEffectList.end()) {
+    ESP_LOGE("PYCAM", "Invalid special effect");
     return false;
   }
   
-  uint8_t ret = camera->set_special_effect(camera, effect);
+  // Convert enum to uint8_t for sensor function
+  uint8_t effect_value = static_cast<uint8_t>(effect);
+  uint8_t ret = camera->set_special_effect(camera, effect_value);
   if (ret != 0) {
     ESP_LOGE("PYCAM", "Could not set effect: error 0x%x", ret);
     return false;
@@ -383,19 +387,19 @@ bool Adafruit_PyCamera::setSpecialEffect(uint8_t effect) {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::cycleSpecialEffectForward() {
-  uint8_t current = getSpecialEffect();
+  SpecialEffect current = getSpecialEffect();
   
-  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+  auto it = std::find_if(SpecialEffectList.begin(), SpecialEffectList.end(),
                          [current](const SpecialEffectInfo& info) {
                            return info.effect == current;
                          });
   
-  uint8_t next_effect;
-  if (it == SpecialEffect.end()) {
-    next_effect = SpecialEffect.front().effect;
+  SpecialEffect next_effect;
+  if (it == SpecialEffectList.end()) {
+    next_effect = SpecialEffectList.front().effect;
   } else {
     ++it;
-    next_effect = (it == SpecialEffect.end()) ? SpecialEffect.back().effect : it->effect;
+    next_effect = (it == SpecialEffectList.end()) ? SpecialEffectList.back().effect : it->effect;
   }
   
   return setSpecialEffect(next_effect);
@@ -414,24 +418,389 @@ bool Adafruit_PyCamera::cycleSpecialEffectForward() {
  */
 /**************************************************************************/
 bool Adafruit_PyCamera::cycleSpecialEffectBackward() {
-  uint8_t current = getSpecialEffect();
+  SpecialEffect current = getSpecialEffect();
   
-  auto it = std::find_if(SpecialEffect.begin(), SpecialEffect.end(),
+  auto it = std::find_if(SpecialEffectList.begin(), SpecialEffectList.end(),
                          [current](const SpecialEffectInfo& info) {
                            return info.effect == current;
                          });
   
-  uint8_t prev_effect;
-  if (it == SpecialEffect.end()) {
-    prev_effect = SpecialEffect.back().effect;
-  } else if (it == SpecialEffect.begin()) {
-    prev_effect = SpecialEffect.front().effect;
+  SpecialEffect prev_effect;
+  if (it == SpecialEffectList.end()) {
+    prev_effect = SpecialEffectList.back().effect;
+  } else if (it == SpecialEffectList.begin()) {
+    prev_effect = SpecialEffectList.front().effect;
   } else {
     --it;
     prev_effect = it->effect;
   }
   
   return setSpecialEffect(prev_effect);
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current JPEG quality setting.
+ *
+ * @return The current quality value (0-63).
+ */
+/**************************************************************************/
+uint8_t Adafruit_PyCamera::getQuality() {
+  return camera->status.quality;
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the JPEG quality for the camera.
+ *
+ * @details Configures the camera to use the specified JPEG quality. Lower
+ * values mean higher quality. If the quality cannot be set, it outputs an
+ * error message with the error code.
+ *
+ * @param quality The desired JPEG quality (0-63, lower is higher quality).
+ * @return true if the quality is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setQuality(uint8_t quality) {
+  if (quality > 63) {
+    ESP_LOGE("PYCAM", "Invalid quality: %d (must be 0-63)", quality);
+    return false;
+  }
+  
+  uint8_t ret = camera->set_quality(camera, quality);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set quality: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current brightness setting.
+ *
+ * @return The current brightness value (-2 to 2).
+ */
+/**************************************************************************/
+int8_t Adafruit_PyCamera::getBrightness() {
+  return camera->status.brightness;
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the brightness level for the camera.
+ *
+ * @details Configures the camera to use the specified brightness level. If the
+ * brightness cannot be set, it outputs an error message with the error code.
+ *
+ * @param brightness The desired brightness level (-2 to 2).
+ * @return true if the brightness is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setBrightness(int8_t brightness) {
+  auto it = std::find_if(Brightness.begin(), Brightness.end(),
+                         [brightness](const BrightnessInfo& info) {
+                           return info.level == brightness;
+                         });
+  if (it == Brightness.end()) {
+    ESP_LOGE("PYCAM", "Invalid brightness: %d (must be -2 to 2)", brightness);
+    return false;
+  }
+  
+  uint8_t ret = camera->set_brightness(camera, brightness);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set brightness: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current contrast setting.
+ *
+ * @return The current contrast level enum value.
+ */
+/**************************************************************************/
+ContrastLevel Adafruit_PyCamera::getContrast() {
+  int8_t level = camera->status.contrast;
+  // Convert int8_t to ContrastLevel enum
+  return static_cast<ContrastLevel>(level);
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the contrast level for the camera.
+ *
+ * @details Configures the camera to use the specified contrast level. If the
+ * contrast cannot be set, it outputs an error message with the error code.
+ *
+ * @param contrast The desired contrast level (ContrastLevel enum).
+ * @return true if the contrast is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setContrast(ContrastLevel contrast) {
+  auto it = std::find_if(Contrast.begin(), Contrast.end(),
+                         [contrast](const ContrastInfo& info) {
+                           return info.level == contrast;
+                         });
+  if (it == Contrast.end()) {
+    ESP_LOGE("PYCAM", "Invalid contrast level");
+    return false;
+  }
+  
+  // Convert enum to int8_t for sensor function
+  int8_t level = static_cast<int8_t>(contrast);
+  uint8_t ret = camera->set_contrast(camera, level);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set contrast: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current saturation setting.
+ *
+ * @return The current saturation level enum value.
+ */
+/**************************************************************************/
+SaturationLevel Adafruit_PyCamera::getSaturation() {
+  int8_t level = camera->status.saturation;
+  // Convert int8_t to SaturationLevel enum
+  return static_cast<SaturationLevel>(level);
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the saturation level for the camera.
+ *
+ * @details Configures the camera to use the specified saturation level. If the
+ * saturation cannot be set, it outputs an error message with the error code.
+ *
+ * @param saturation The desired saturation level (SaturationLevel enum).
+ * @return true if the saturation is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setSaturation(SaturationLevel saturation) {
+  auto it = std::find_if(Saturation.begin(), Saturation.end(),
+                         [saturation](const SaturationInfo& info) {
+                           return info.level == saturation;
+                         });
+  if (it == Saturation.end()) {
+    ESP_LOGE("PYCAM", "Invalid saturation level");
+    return false;
+  }
+  
+  // Convert enum to int8_t for sensor function
+  int8_t level = static_cast<int8_t>(saturation);
+  uint8_t ret = camera->set_saturation(camera, level);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set saturation: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current sharpness setting.
+ *
+ * @return The current sharpness level enum value.
+ */
+/**************************************************************************/
+SharpnessLevel Adafruit_PyCamera::getSharpness() {
+  int8_t level = camera->status.sharpness;
+  // Convert int8_t to SharpnessLevel enum
+  return static_cast<SharpnessLevel>(level);
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the sharpness level for the camera.
+ *
+ * @details Configures the camera to use the specified sharpness level. If the
+ * sharpness cannot be set, it outputs an error message with the error code.
+ *
+ * @param sharpness The desired sharpness level (SharpnessLevel enum).
+ * @return true if the sharpness is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setSharpness(SharpnessLevel sharpness) {
+  auto it = std::find_if(Sharpness.begin(), Sharpness.end(),
+                         [sharpness](const SharpnessInfo& info) {
+                           return info.level == sharpness;
+                         });
+  if (it == Sharpness.end()) {
+    ESP_LOGE("PYCAM", "Invalid sharpness level");
+    return false;
+  }
+  
+  // Convert enum to int8_t for sensor function
+  int8_t level = static_cast<int8_t>(sharpness);
+  uint8_t ret = camera->set_sharpness(camera, level);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set sharpness: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current denoise setting.
+ *
+ * @return The current denoise value (0-8).
+ */
+/**************************************************************************/
+uint8_t Adafruit_PyCamera::getDenoise() {
+  return camera->status.denoise;
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the denoise level for the camera.
+ *
+ * @details Configures the camera to use the specified denoise level. If the
+ * denoise cannot be set, it outputs an error message with the error code.
+ *
+ * @param denoise The desired denoise level (0-8).
+ * @return true if the denoise is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setDenoise(uint8_t denoise) {
+  auto it = std::find_if(Denoise.begin(), Denoise.end(),
+                         [denoise](const DenoiseInfo& info) {
+                           return info.level == denoise;
+                         });
+  if (it == Denoise.end()) {
+    ESP_LOGE("PYCAM", "Invalid denoise: %d (must be 0-8)", denoise);
+    return false;
+  }
+  
+  uint8_t ret = camera->set_denoise(camera, denoise);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set denoise: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current white balance mode setting.
+ *
+ * @return The current white balance mode enum value.
+ */
+/**************************************************************************/
+WhiteBalanceMode Adafruit_PyCamera::getWbMode() {
+  uint8_t mode = camera->status.wb_mode;
+  // Convert uint8_t to WhiteBalanceMode enum
+  return static_cast<WhiteBalanceMode>(mode);
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the white balance mode for the camera.
+ *
+ * @details Configures the camera to use the specified white balance mode. If the
+ * white balance mode cannot be set, it outputs an error message with the error code.
+ *
+ * @param mode The desired white balance mode (WhiteBalanceMode enum).
+ * @return true if the white balance mode is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setWbMode(WhiteBalanceMode mode) {
+  auto it = std::find_if(WbMode.begin(), WbMode.end(),
+                         [mode](const WbModeInfo& info) {
+                           return info.mode == mode;
+                         });
+  if (it == WbMode.end()) {
+    ESP_LOGE("PYCAM", "Invalid white balance mode");
+    return false;
+  }
+  
+  // Convert enum to uint8_t for sensor function
+  uint8_t mode_value = static_cast<uint8_t>(mode);
+  uint8_t ret = camera->set_wb_mode(camera, mode_value);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set wb_mode: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current gain ceiling setting.
+ *
+ * @return The current gain ceiling value.
+ */
+/**************************************************************************/
+gainceiling_t Adafruit_PyCamera::getGainceiling() {
+  return (gainceiling_t)camera->status.gainceiling;
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the gain ceiling for the camera.
+ *
+ * @details Configures the camera to use the specified gain ceiling. If the
+ * gain ceiling cannot be set, it outputs an error message with the error code.
+ *
+ * @param gainceiling The desired gain ceiling (GAINCEILING_2X to GAINCEILING_128X).
+ * @return true if the gain ceiling is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setGainceiling(gainceiling_t gainceiling) {
+  if (gainceiling > GAINCEILING_128X) {
+    ESP_LOGE("PYCAM", "Invalid gainceiling: %d (must be 0-6)", gainceiling);
+    return false;
+  }
+  
+  uint8_t ret = camera->set_gainceiling(camera, gainceiling);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set gainceiling: error 0x%x", ret);
+    return false;
+  }
+  return true;
+}
+
+/**************************************************************************/
+/**
+ * @brief Gets the current AGC gain setting.
+ *
+ * @return The current AGC gain value (0-30).
+ */
+/**************************************************************************/
+uint8_t Adafruit_PyCamera::getAgcGain() {
+  return camera->status.agc_gain;
+}
+
+/**************************************************************************/
+/**
+ * @brief Sets the AGC gain for the camera.
+ *
+ * @details Configures the camera to use the specified AGC gain. If the
+ * AGC gain cannot be set, it outputs an error message with the error code.
+ *
+ * @param gain The desired AGC gain (0-30).
+ * @return true if the AGC gain is successfully set, false if there is an error.
+ */
+/**************************************************************************/
+bool Adafruit_PyCamera::setAgcGain(uint8_t gain) {
+  if (gain > 30) {
+    ESP_LOGE("PYCAM", "Invalid agc_gain: %d (must be 0-30)", gain);
+    return false;
+  }
+  
+  uint8_t ret = camera->set_agc_gain(camera, gain);
+  if (ret != 0) {
+    ESP_LOGE("PYCAM", "Could not set agc_gain: error 0x%x", ret);
+    return false;
+  }
+  return true;
 }
 
 /**************************************************************************/
@@ -490,7 +859,7 @@ bool Adafruit_PyCamera::initCamera(bool hwreset) {
    */
   camera_config.pixel_format = PIXFORMAT_JPEG;
   camera_config.frame_size =
-      Adafruit_PyCamera::Framesize.back().framesize; // start with biggest possible image supported!!! do not
+      Framesize.back().framesize; // start with biggest possible image supported!!! do not
                       // change this
   camera_config.jpeg_quality = 4;
   camera_config.fb_count = 2;

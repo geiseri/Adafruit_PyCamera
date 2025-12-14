@@ -11,17 +11,10 @@
 #include <SdFat_Adafruit_Fork.h>
 #include <functional>
 #include <JPEGDEC.h>
+#include "CameraTypes.h"
 #ifndef TAG
 #define TAG "PYCAM"
 #endif
-
-namespace detail {
-  // Helper template to deduce array size from initializer list
-  template<typename T, typename... U>
-  constexpr auto make_static_array(U&&... u) -> std::array<T, sizeof...(U)> {
-      return {{std::forward<U>(u)...}};
-  }
-}
 
 /**************************************************************************/
 /**
@@ -90,52 +83,6 @@ public:
              (1UL << AWEXP_SD_DET)
   };
 
-  /**
-   * @brief Structure containing framesize information.
-   */
-  struct FramesizeInfo {
-    framesize_t framesize;
-    uint16_t width;
-    uint16_t height;
-    const char* name;
-  };
-
-  static constexpr auto Framesize = detail::make_static_array<FramesizeInfo>(
-    FramesizeInfo{FRAMESIZE_96X96, 96, 96, "96x96"},
-    FramesizeInfo{FRAMESIZE_QQVGA, 160, 120, "QQVGA"},
-    FramesizeInfo{FRAMESIZE_128X128, 128, 128, "128x128"},
-    FramesizeInfo{FRAMESIZE_QCIF, 176, 144, "QCIF"},
-    FramesizeInfo{FRAMESIZE_HQVGA, 240, 176, "HQVGA"},
-    FramesizeInfo{FRAMESIZE_240X240, 240, 240, "240x240"},
-    FramesizeInfo{FRAMESIZE_QVGA, 320, 240, "QVGA"},
-    FramesizeInfo{FRAMESIZE_320X320, 320, 320, "320x320"},
-    FramesizeInfo{FRAMESIZE_CIF, 400, 296, "CIF"},
-    FramesizeInfo{FRAMESIZE_HVGA, 480, 320, "HVGA"},
-    FramesizeInfo{FRAMESIZE_VGA, 640, 480, "VGA"},
-    FramesizeInfo{FRAMESIZE_SVGA, 800, 600, "SVGA"},
-    FramesizeInfo{FRAMESIZE_XGA, 1024, 768, "XGA"},
-    FramesizeInfo{FRAMESIZE_HD, 1280, 720, "HD"},
-    FramesizeInfo{FRAMESIZE_SXGA, 1280, 1024, "SXGA"},
-    FramesizeInfo{FRAMESIZE_UXGA, 1600, 1200, "UXGA"}
-  );
-
-  /**
-   * @brief Structure containing special effect information.
-   */
-  struct SpecialEffectInfo {
-    uint8_t effect;
-    const char* name;
-  };
-
-  static constexpr auto SpecialEffect = detail::make_static_array<SpecialEffectInfo>(
-    SpecialEffectInfo{0, "Normal"},
-    SpecialEffectInfo{1, "Negative"},
-    SpecialEffectInfo{2, "Grayscale"},
-    SpecialEffectInfo{3, "Red Tint"},
-    SpecialEffectInfo{4, "Green Tint"},
-    SpecialEffectInfo{5, "Blue Tint"},
-    SpecialEffectInfo{6, "Sepia"}
-  );
   /**************************************************************************/
   /**
    * @brief Construct a new Adafruit_PyCamera object.
@@ -162,10 +109,28 @@ public:
   bool cycleFramesizeForward();
   bool cycleFramesizeBackward();
   framesize_t framesize_ = FRAMESIZE_UXGA;
-  bool setSpecialEffect(uint8_t effect);
-  uint8_t getSpecialEffect();
+  SpecialEffect getSpecialEffect();
+  bool setSpecialEffect(SpecialEffect effect);
   bool cycleSpecialEffectForward();
   bool cycleSpecialEffectBackward();
+  uint8_t getQuality();
+  bool setQuality(uint8_t quality);
+  int8_t getBrightness();
+  bool setBrightness(int8_t brightness);
+  ContrastLevel getContrast();
+  bool setContrast(ContrastLevel contrast);
+  SaturationLevel getSaturation();
+  bool setSaturation(SaturationLevel saturation);
+  SharpnessLevel getSharpness();
+  bool setSharpness(SharpnessLevel sharpness);
+  uint8_t getDenoise();
+  bool setDenoise(uint8_t denoise);
+  WhiteBalanceMode getWbMode();
+  bool setWbMode(WhiteBalanceMode mode);
+  gainceiling_t getGainceiling();
+  bool setGainceiling(gainceiling_t gainceiling);
+  uint8_t getAgcGain();
+  bool setAgcGain(uint8_t gain);
   void speaker_tone(uint32_t tonefreq, uint32_t tonetime);
 
   float readBatteryVoltage(void);
@@ -183,6 +148,7 @@ public:
 
   uint32_t timestamp(void);
   void timestampPrint(const char *msg);
+
   /** @brief Pointer to the camera sensor structure. */
   sensor_t *camera;
   /** @brief The PyCamera framebuffer object. */
